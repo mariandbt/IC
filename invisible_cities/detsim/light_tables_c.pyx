@@ -28,9 +28,13 @@ from libc.math cimport           floor
 from libc.math cimport round as cround
 
 
-
 from ..         core import system_of_units as   units
 from  . light_tables import read_lighttable as read_lt
+
+# *********************************************************
+from fibers_simulation import unit
+import math
+# *********************************************************
 
 cdef class LightTable:
     """
@@ -289,3 +293,209 @@ cdef class LT_PMT(LightTable):
         array of values over EL gap partitions
         """
         return super().get_values(x, y, sns_id)
+
+
+cdef class LT_FIBERS(LightTable):
+    """
+    A class to handle reading of SiPMs at the end of the fibers light table. Inherits from base class LightTable
+
+    Attributes:
+    -----------
+       el_gap_width  : double
+             width of the EL gap
+       active_radius : double
+             active radius of full detector volume
+       num_sensors   : int
+             number of sipm sensors
+
+    Parameters (keyword):
+    -----------
+        fname         : string
+              filename of the light table
+        el_gap_width  : float
+              optionally set new EL gap width
+        active_radius : float
+              optionally set new active radius
+
+    """
+
+    cdef:
+        double [:, :, :, ::1] values
+        double max_zel
+        double max_psf
+        double max_psf2
+        double inv_binx
+        double inv_biny
+        double xmin
+        double ymin
+        double active_r
+        double el_gap
+
+
+    def __init__(self, *, fname, el_gap_width=None, active_radius=None, data_mc_ratio=1):
+        if data_mc_ratio <= 0: raise ValueError("LT_PMT: data_mc_ratio must be greater than 0")
+
+        # TPC info **************************************************
+        self.NPanels        = 18
+        self.DeltaTheta     = 2*math.pi/self.NPanels  *unit.rad      
+        # TPC info **************************************************
+
+        self.FilePath       = fname
+
+        config_df       = pd.read_hdf(self.FilePath, "/s2LT/Config")
+        sns_positions   = pd.read_hdf(self.FilePath, "/s2LT/sns_positions")
+        lt_df           = pd.read_hdf(self.FilePath, "/s2LT/LightTable")
+        lt_df.columns   = lt_df.columns.to_series().replace('SiPMf', 'sens', regex=True)
+
+        self.LT     = lt_df
+        self.Config = config_df
+
+        self.LightYield     = config_df.loc[config_df.ParameterName == 'S2LightYield', 'ParameterValue'].values[0] # [ph/ie⁻]
+        self.Nie            = config_df.loc[config_df.ParameterName == 'S2TableStatistics', 'ParameterValue'].values[0] # number of ie⁻ used to create the table
+
+        self.active_r       = config_df.loc[config_df.ParameterName == 'ACTIVE_rad', 'ParameterValue'].values[0] # [mm]
+        self.el_gap_width   = config_df.loc[config_df.ParameterName == 'EL_GAP', 'ParameterValue'].values[0] # [mm]
+        el_gap              = self.el_gap_width
+
+
+
+        self.SensorX        = np.array(sns_positions.x) *unit.mm
+        self.SensorY        = np.array(sns_positions.y) *unit.mm
+        self.SensorTheta    = np.round(np.arctan2(self.SensorY, self.SensorX), 3)
+
+        self.NSensors       = len(sns_positions) # update number of sensors
+        # self.SensorsPosID   = np.arange((-self.NSensors/2), (self.NSensors/2))
+        self.SensorsIDs     = np.array(sns_positions.sensor_id)[np.argsort(self.SensorTheta.magnitude)]
+
+        self.SensorsPerPanel    = int(self.NSensors/self.NPanels) 
+
+
+        # self.pos_to_id_dict         = dict(zip(self.SensorsPosID,  self.SensorsIDs))
+        # self.id_to_pos_dict         = dict(zip(self.SensorsIDs,  self.SensorsPosID))
+
+
+        self.num_sensors    = self.NSensors
+
+        self.NBinsX     = len(lt_df.bin_initial_x.unique())
+        self.NBinsY     = len(lt_df.bin_initial_y.unique())
+
+        self.WidthBinX  = (lt_df.bin_final_x - lt_df.bin_initial_x)[0] *unit.mm
+        self.WidthBinY  = (lt_df.bin_final_y - lt_df.bin_initial_y)[0] *unit.mm
+        
+        self.MinimumX   = lt_df.bin_initial_x.min() *unit.mm
+        self.MinimumY   = lt_df.bin_initial_y.min() *unit.mm
+
+        self.MaximumX   = lt_df.bin_final_x.max() *unit.mm
+        self.MaximumY   = lt_df.bin_final_y.max() *unit.mm
+        
+        self.zbins_ = np.array([0, el_gap]).astype(np.double)
+
+        lenz = len(self.zbins_)
+
+        values_3d = np.zeros((self.NSensors, self.NBinsX, self.NBinsY), dtype=np.double)
+
+        for i, sens_id in enumerate(self.SensorsIDs):
+            # Extract and reshape
+            s2_matrix = lt_df[f'sens_{sens_id}'].to_numpy().reshape(self.NBinsX, self.NBinsY)
+            
+            # Scale by LightYield
+            signal = s2_matrix * self.LightYield
+
+            # Apply Poisson fluctuations
+            fluctuated = np.random.poisson(signal).astype(np.double)
+
+            # Assign to 3D structure
+            values_3d[i, :, :] = fluctuated
+
+        # Expand to 4D (NSensors, NBinsX, NBinsY, lenz)
+        self.values = np.asarray(np.repeat(values_3d[..., np.newaxis], lenz, axis=-1) * data_mc_ratio, dtype=np.double, order='C')
+
+    
+
+        # lt_dict = {}
+        # for sens_id in self.SensorIDs:
+        #     s2_matrix = lt_df[f'sens_{sens_id}'].to_numpy().reshape(self.NBinsX, self.NBinsY)
+        #     lt_dict[sens_id] = s2_matrix
+        # self.S2TablesDict   = lt_dict
+
+        
+
+    @cython.wraparound(False)
+    cdef double* get_values_(self, const double x, const double y, const int sns_id):
+        cdef:
+            double*  values
+            int xindx, yindx
+
+
+        dtheta = self.DeltaTheta.magnitude
+
+        alpha   = np.arctan2(y, x)
+        radio   = np.sqrt(x*x + y*y)
+
+        if alpha > 0:
+            rotation    = int((alpha + dtheta/2)/dtheta)
+        else:
+            rotation    = int((alpha - dtheta/2)/dtheta)
+
+        new_alpha   = alpha - rotation * dtheta
+        new_xx      = radio * np.cos(new_alpha)
+        new_yy      = radio * np.sin(new_alpha)
+
+
+        pos     = sns_id - self.NSensors/2
+        new_pos = pos - rotation*self.SensorsPerPanel
+
+        sens_id = self.SensorIDs[pos]
+        print(f'You\'re looking at sensor {sens_id}')
+
+        if (new_pos == self.NSensors/2):
+            new_pos = -self.NSensors/2
+
+        if (new_pos > self.NSensors/2):
+            new_pos = new_pos%(self.NSensors/2)
+
+        if (new_pos < -self.NSensors/2):
+            new_pos = new_pos%(-self.NSensors/2)
+
+        new_sens_idx    = int(new_pos + self.NSensors/2)
+        # new_sens_id     = self.SensorsIDs[new_sens_idx]
+
+
+        xindx = ((new_xx - self.MinimumX)//(self.WidthBinX)).magnitude.astype(int)
+        yindx = ((new_yy - self.MinimumY)//(self.WidthBinY)).magnitude.astype(int)
+        
+        zero_signal_conditions = (new_xx > self.MaximumX) | \
+                                 (new_xx < self.MinimumX) | \
+                                 (new_yy > self.MaximumY) | \
+                                 (new_yy < self.MinimumY)
+        
+        if zero_signal_conditions:
+            return NULL
+        
+        # # For the valid indices, get the corresponding values from the s2Table.S2TablesDict
+        # signal = self.S2TablesDict[f'sens_{new_sens_id}'][xindx, yindx]*self.LightYield 
+
+        # # Generate Poisson-distributed random numbers for these values
+        # poisson_fluctuations = np.random.poisson(signal)
+
+        values = &self.values[new_sens_idx, xindx, yindx, 0]
+
+        return values
+
+    def get_values(self, const double x, const double y, const int sns_id):
+        """
+        Retrive values from the light tables for all z partitions.
+
+        Parameters:
+        -----------
+        x, y   : doubles
+            electron position at EL plane
+        sns_id : int
+            internal sensor id in range [0, num_sensors)
+            sensors are ordered by columns of light table file
+
+        Returns:
+        --------
+        array of values over EL gap partitions
+        """
+        return super().get_values(x, y, sns_id) 

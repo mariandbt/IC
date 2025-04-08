@@ -11,10 +11,17 @@ from .. core.core_functions import binedges_from_bincenters
 from .. io.dst_io  import load_dst
 
 
+import sys
+sys.path.append('/scratch/marian/python/notebooks/modules')
+import set_up as setup 
+
+
+
 def read_lighttable(fname      : str,
                     group_name : str,
                     el_gap     : Optional[float]=None,
-                    active_r   : Optional[float]=None):
+                    active_r   : Optional[float]=None,
+                    fibers     : Optional[bool]=False):
     """ A helper function to extract dataframes and configuration infro from files.
     Parameters:
         :fname:      str
@@ -36,6 +43,8 @@ def read_lighttable(fname      : str,
             input el_gap or el_gap read from file
         :active_r: float
             input active_r or active_r read from file
+        :fibers: bool
+            input if the geometry used is the one with fibers
     """
 
     lt_df      = load_dst(fname, group_name, "LightTable")
@@ -44,13 +53,13 @@ def read_lighttable(fname      : str,
     active_r_f = float(config_df.loc["ACTIVE_rad"].value) * units.mm
     if el_gap and (el_gap != el_gap_f):
         warnings.warn('el_gap parameter mismatch, setting to user defined one',
-                      UserWarning)
+                    UserWarning)
     else:
         el_gap = el_gap_f
 
     if active_r and (active_r != active_r_f):
             warnings.warn('active_r parameter mismatch, setting to user defined one',
-                          UserWarning)
+                        UserWarning)
     else:
         active_r = active_r_f
 
