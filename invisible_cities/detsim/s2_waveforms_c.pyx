@@ -89,20 +89,27 @@ def create_wfs(double [:] xs           ,
         ph_p = phs[pindx]
         t_p  = (ts[pindx]-tmin)/sns_time_bin #division with sensor bin size faster if done outside inner loop
         for snsindx in range(nsens):
+        # for snsindx in [0, 50]:
             lt_factors_p = lt.get_values_(x_p, y_p, snsindx)
             if lt_factors_p != NULL:
+                # print(f'{snsindx} NO NULL: {lt_factors_p[0]}, {lt_factors_p[1]}')
                 for elindx in range(el_times.shape[0]):
                     time  = t_p + el_times[elindx]
                     tindx = <int> floor(time)
+                    # print(f'index: {tindx}, numbins: {num_bins}')
                     if tindx >= num_bins:
+                        # print('EMPTY WAVEFORM')
                         continue
                     signal = lt_factors_p[elindx] * ph_p
+                    # print(f'lt_factors_p[elindx]: {lt_factors_p[elindx]}, signal: {signal}')
                     wfs[snsindx, tindx] += signal
+                # print(f'sum: {np.asarray(wfs[snsindx]).sum()}')
 
     #smearing factor in case time_bs_sns is larger than sns_time_bin
     #used in S2 simulation on pmts
     cdef int nsmear = <int> ceil(time_bs_sns)
     cdef int nsmear_r, nsmear_l
+    # print(nsmear)
     if nsmear>1:
         nsmear_l  = <int> (nsmear/2)
         nsmear_r = nsmear - nsmear_l

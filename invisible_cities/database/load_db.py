@@ -7,10 +7,11 @@ from functools import lru_cache
 
 
 class DetDB:
-    new     = os.environ['ICTDIR'] + '/invisible_cities/database/localdb.NEWDB.sqlite3'
-    demopp  = os.environ['ICTDIR'] + '/invisible_cities/database/localdb.DEMOPPDB.sqlite3'
-    next100 = os.environ['ICTDIR'] + '/invisible_cities/database/localdb.NEXT100DB.sqlite3'
-    flex100 = os.environ['ICTDIR'] + '/invisible_cities/database/localdb.Flex100DB.sqlite3'
+    new             = os.environ['ICTDIR'] + '/invisible_cities/database/localdb.NEWDB.sqlite3'
+    demopp          = os.environ['ICTDIR'] + '/invisible_cities/database/localdb.DEMOPPDB.sqlite3'
+    next100         = os.environ['ICTDIR'] + '/invisible_cities/database/localdb.NEXT100DB.sqlite3'
+    next100fibers   = os.environ['ICTDIR'] + '/invisible_cities/database/localdb.NEXT100FIBDB.sqlite3'
+    flex100         = os.environ['ICTDIR'] + '/invisible_cities/database/localdb.Flex100DB.sqlite3'
 
 def tmap(*args):
     return tuple(map(*args))
@@ -21,6 +22,37 @@ def get_db(db):
 # Run to take always the same calibration constant, etc for MC files
 # 3012 was the first SiPM calibration after remapping.
 runNumberForMC = 3012
+
+@lru_cache(maxsize=10)
+def DataFIB(db_file, run_number=1e5):
+    if run_number == 0:
+        run_number = runNumberForMC
+
+    conn = sqlite3.connect(get_db(db_file))
+
+    sql = '''select pos.SensorID, map.ElecID "ChannelID", Label "FibID",
+case when msk.SensorID is NULL then 1 else 0 end "Active",
+X, Y, coeff_blr, coeff_c, abs(Centroid) "adc_to_pes", noise_rms, Sigma
+from ChannelPosition as pos INNER JOIN ChannelMapping
+as map ON pos.SensorID = map.SensorID LEFT JOIN
+(select * from FibNoiseRms where MinRun <= {0} and (MaxRun >= {0} or MaxRun is NULL))
+as noise on map.ElecID = noise.ElecID LEFT JOIN
+(select * from ChannelMask where MinRun <= {0} and {0} <= MaxRun)
+as msk ON pos.SensorID = msk.SensorID LEFT JOIN
+(select * from ChannelGain where  MinRun <= {0} and {0} <= MaxRun)
+as gain ON pos.SensorID = gain.SensorID LEFT JOIN
+(select * from FibBlr where MinRun <= {0} and (MaxRun >= {0} or MaxRun is NULL))
+as blr ON map.ElecID = blr.ElecID
+where pos.SensorID < 1000
+and pos.MinRun <= {0} and {0} <= pos.MaxRun
+and map.MinRun <= {0} and {0} <= map.MaxRun
+and pos.Label LIKE 'SiPMfib%'
+order by Active desc, pos.SensorID
+'''.format(abs(run_number))
+    data = pd.read_sql_query(sql, conn)
+    data.fillna(0, inplace=True)
+    conn.close()
+    return data
 
 @lru_cache(maxsize=10)
 def DataPMT(db_file, run_number=1e5):

@@ -330,6 +330,23 @@ cdef class LT_FIBERS(LightTable):
         double ymin
         double active_r
         double el_gap
+        int    NPanels
+        double DeltaTheta
+        public object LT      # For pandas DataFrame
+        public object Config  # For pandas DataFrame
+        double LightYield
+        int    Nie
+        int    NSensors
+        int    SensorsPerPanel
+        int    NBinsX
+        int    NBinsY
+        double WidthBinX
+        double WidthBinY
+        double MinimumX
+        double MinimumY
+        double MaximumX
+        double MaximumY
+        public object SensorsIDs
 
 
     def __init__(self, *, fname, el_gap_width=None, active_radius=None, data_mc_ratio=1):
@@ -337,14 +354,14 @@ cdef class LT_FIBERS(LightTable):
 
         # TPC info **************************************************
         self.NPanels        = 18
-        self.DeltaTheta     = 2*math.pi/self.NPanels  *unit.rad      
+        self.DeltaTheta     = 2*math.pi/self.NPanels  #*unit.rad      
         # TPC info **************************************************
 
-        self.FilePath       = fname
+        # self.FilePath       = fname
 
-        config_df       = pd.read_hdf(self.FilePath, "/s2LT/Config")
-        sns_positions   = pd.read_hdf(self.FilePath, "/s2LT/sns_positions")
-        lt_df           = pd.read_hdf(self.FilePath, "/s2LT/LightTable")
+        config_df       = pd.read_hdf(fname, "/s2LT/Config")
+        sns_positions   = pd.read_hdf(fname, "/s2LT/sns_positions")
+        lt_df           = pd.read_hdf(fname, "/s2LT/LightTable")
         lt_df.columns   = lt_df.columns.to_series().replace('SiPMf', 'sens', regex=True)
 
         self.LT     = lt_df
@@ -354,18 +371,19 @@ cdef class LT_FIBERS(LightTable):
         self.Nie            = config_df.loc[config_df.ParameterName == 'S2TableStatistics', 'ParameterValue'].values[0] # number of ie⁻ used to create the table
 
         self.active_r       = config_df.loc[config_df.ParameterName == 'ACTIVE_rad', 'ParameterValue'].values[0] # [mm]
+        config_df['ParameterName'] = config_df['ParameterName'].replace('EL_GAP ', 'EL_GAP')
         self.el_gap_width   = config_df.loc[config_df.ParameterName == 'EL_GAP', 'ParameterValue'].values[0] # [mm]
         el_gap              = self.el_gap_width
 
 
 
-        self.SensorX        = np.array(sns_positions.x) *unit.mm
-        self.SensorY        = np.array(sns_positions.y) *unit.mm
-        self.SensorTheta    = np.round(np.arctan2(self.SensorY, self.SensorX), 3)
+        SensorX        = np.array(sns_positions.x) *unit.mm
+        SensorY        = np.array(sns_positions.y) *unit.mm
+        SensorTheta    = np.round(np.arctan2(SensorY, SensorX), 3)
 
         self.NSensors       = len(sns_positions) # update number of sensors
         # self.SensorsPosID   = np.arange((-self.NSensors/2), (self.NSensors/2))
-        self.SensorsIDs     = np.array(sns_positions.sensor_id)[np.argsort(self.SensorTheta.magnitude)]
+        self.SensorsIDs     = np.array(sns_positions.sensor_id)[np.argsort(SensorTheta.magnitude)]
 
         self.SensorsPerPanel    = int(self.NSensors/self.NPanels) 
 
@@ -379,16 +397,17 @@ cdef class LT_FIBERS(LightTable):
         self.NBinsX     = len(lt_df.bin_initial_x.unique())
         self.NBinsY     = len(lt_df.bin_initial_y.unique())
 
-        self.WidthBinX  = (lt_df.bin_final_x - lt_df.bin_initial_x)[0] *unit.mm
-        self.WidthBinY  = (lt_df.bin_final_y - lt_df.bin_initial_y)[0] *unit.mm
+        self.WidthBinX  = (lt_df.bin_final_x - lt_df.bin_initial_x)[0] #*unit.mm
+        self.WidthBinY  = (lt_df.bin_final_y - lt_df.bin_initial_y)[0] #*unit.mm
         
-        self.MinimumX   = lt_df.bin_initial_x.min() *unit.mm
-        self.MinimumY   = lt_df.bin_initial_y.min() *unit.mm
+        self.MinimumX   = lt_df.bin_initial_x.min() #*unit.mm
+        self.MinimumY   = lt_df.bin_initial_y.min() #*unit.mm
 
-        self.MaximumX   = lt_df.bin_final_x.max() *unit.mm
-        self.MaximumY   = lt_df.bin_final_y.max() *unit.mm
+        self.MaximumX   = lt_df.bin_final_x.max() #*unit.mm
+        self.MaximumY   = lt_df.bin_final_y.max() #*unit.mm
         
-        self.zbins_ = np.array([0, el_gap]).astype(np.double)
+        # center of bins in EL
+        self.zbins_ = np.arange(el_gap/2., el_gap, el_gap).astype(np.double)
 
         lenz = len(self.zbins_)
 
@@ -398,22 +417,22 @@ cdef class LT_FIBERS(LightTable):
             # Extract and reshape
             s2_matrix = lt_df[f'sens_{sens_id}'].to_numpy().reshape(self.NBinsX, self.NBinsY)
             
-            # Scale by LightYield
-            signal = s2_matrix * self.LightYield
+            signal = s2_matrix 
 
             # Apply Poisson fluctuations
-            fluctuated = np.random.poisson(signal).astype(np.double)
+            # fluctuated = np.random.poisson(signal).astype(np.double)
 
             # Assign to 3D structure
-            values_3d[i, :, :] = fluctuated
+            # values_3d[i, :, :] = fluctuated
+            values_3d[i, :, :] = signal
 
         # Expand to 4D (NSensors, NBinsX, NBinsY, lenz)
-        self.values = np.asarray(np.repeat(values_3d[..., np.newaxis], lenz, axis=-1) * data_mc_ratio, dtype=np.double, order='C')
+        self.values = np.asarray(np.repeat(values_3d[..., np.newaxis]/lenz, lenz, axis=-1) * data_mc_ratio, dtype=np.double, order='C')
 
     
 
         # lt_dict = {}
-        # for sens_id in self.SensorIDs:
+        # for sens_id in self.SensorsIDs:
         #     s2_matrix = lt_df[f'sens_{sens_id}'].to_numpy().reshape(self.NBinsX, self.NBinsY)
         #     lt_dict[sens_id] = s2_matrix
         # self.S2TablesDict   = lt_dict
@@ -421,13 +440,13 @@ cdef class LT_FIBERS(LightTable):
         
 
     @cython.wraparound(False)
-    cdef double* get_values_(self, const double x, const double y, const int sns_id):
+    cdef double* get_values_(self, const double x, const double y, const int sns_idx):
         cdef:
             double*  values
             int xindx, yindx
 
 
-        dtheta = self.DeltaTheta.magnitude
+        dtheta = self.DeltaTheta
 
         alpha   = np.arctan2(y, x)
         radio   = np.sqrt(x*x + y*y)
@@ -441,28 +460,25 @@ cdef class LT_FIBERS(LightTable):
         new_xx      = radio * np.cos(new_alpha)
         new_yy      = radio * np.sin(new_alpha)
 
-
-        pos     = sns_id - self.NSensors/2
+        max_pos = self.NSensors
+        pos     = sns_idx 
         new_pos = pos - rotation*self.SensorsPerPanel
 
-        sens_id = self.SensorIDs[pos]
-        print(f'You\'re looking at sensor {sens_id}')
+        # sens_id = self.SensorsIDs[pos]
+        # print(f'You\'re looking at sensor {sens_id}')
 
-        if (new_pos == self.NSensors/2):
-            new_pos = -self.NSensors/2
+        if (new_pos == max_pos):
+            new_pos = 0
 
-        if (new_pos > self.NSensors/2):
-            new_pos = new_pos%(self.NSensors/2)
+        else:
+            new_pos = new_pos%(max_pos)
 
-        if (new_pos < -self.NSensors/2):
-            new_pos = new_pos%(-self.NSensors/2)
-
-        new_sens_idx    = int(new_pos + self.NSensors/2)
+        new_sens_idx    = int(new_pos)
         # new_sens_id     = self.SensorsIDs[new_sens_idx]
 
 
-        xindx = ((new_xx - self.MinimumX)//(self.WidthBinX)).magnitude.astype(int)
-        yindx = ((new_yy - self.MinimumY)//(self.WidthBinY)).magnitude.astype(int)
+        xindx = ((new_xx - self.MinimumX)//(self.WidthBinX)).astype(int)
+        yindx = ((new_yy - self.MinimumY)//(self.WidthBinY)).astype(int)
         
         zero_signal_conditions = (new_xx > self.MaximumX) | \
                                  (new_xx < self.MinimumX) | \
@@ -482,7 +498,7 @@ cdef class LT_FIBERS(LightTable):
 
         return values
 
-    def get_values(self, const double x, const double y, const int sns_id):
+    def get_values(self, const double x, const double y, const int sns_idx):
         """
         Retrive values from the light tables for all z partitions.
 
@@ -490,7 +506,7 @@ cdef class LT_FIBERS(LightTable):
         -----------
         x, y   : doubles
             electron position at EL plane
-        sns_id : int
+        sns_idx : int
             internal sensor id in range [0, num_sensors)
             sensors are ordered by columns of light table file
 
@@ -498,4 +514,4 @@ cdef class LT_FIBERS(LightTable):
         --------
         array of values over EL gap partitions
         """
-        return super().get_values(x, y, sns_id) 
+        return super().get_values(x, y, sns_idx) 

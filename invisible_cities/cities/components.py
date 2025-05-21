@@ -698,12 +698,16 @@ def dhits_from_files(paths: List[str]) -> Iterator[Dict[str,Union[HitCollection,
 
 def sensor_data(path, wf_type):
     with tb.open_file(path, "r") as h5in:
-        if   wf_type is WfType.rwf :   (pmt_wfs, sipm_wfs) = (h5in.root.RD .pmtrwf,   h5in.root.RD .sipmrwf)
-        elif wf_type is WfType.mcrd:   (pmt_wfs, sipm_wfs) = (h5in.root.    pmtrd ,   h5in.root.    sipmrd )
+        # if   wf_type is WfType.rwf :   (pmt_wfs, sipm_wfs) = (h5in.root.RD .pmtrwf,   h5in.root.RD .sipmrwf)
+        # elif wf_type is WfType.mcrd:   (pmt_wfs, sipm_wfs) = (h5in.root.    pmtrd ,   h5in.root.    sipmrd )
+        if   wf_type is WfType.rwf :   (fib_wfs, sipm_wfs) = (h5in.root.RD .fibrwf,   h5in.root.RD .sipmrwf)
+        elif wf_type is WfType.mcrd:   (fib_wfs, sipm_wfs) = (h5in.root.    fibrd ,   h5in.root.    sipmrd )
         else                       :   raise TypeError(f"Invalid WfType: {type(wf_type)}")
-        _, NPMT ,  PMTWL =  pmt_wfs.shape
+        # _, NPMT ,  PMTWL =  pmt_wfs.shape
+        _, NFIB ,  FIBWL =  fib_wfs.shape
         _, NSIPM, SIPMWL = sipm_wfs.shape
-        return SensorData(NPMT=NPMT, PMTWL=PMTWL, NSIPM=NSIPM, SIPMWL=SIPMWL)
+        # return SensorData(NPMT=NPMT, PMTWL=PMTWL, NSIPM=NSIPM, SIPMWL=SIPMWL)
+        return SensorData(NFIB=NFIB, FIBWL=FIBWL, NSIPM=NSIPM, SIPMWL=SIPMWL)
 
 ####### Transformers ########
 
@@ -1128,22 +1132,29 @@ def check_max_time(max_time: float, buffer_length: float) -> Union[int, float]:
 
 
 @check_annotations
-def calculate_and_save_buffers(buffer_length    : float        ,
+def calculate_and_save_buffers(detector_db      : str          ,
+                               buffer_length    : float        ,
                                max_time         : float        ,
                                pre_trigger      : float        ,
-                               pmt_wid          : float        ,
+                            #    pmt_wid          : float        ,
+                               EP_sensor_wid          : float        ,
                                sipm_wid         : float        ,
                                trigger_threshold: int          ,
                                h5out            : tb.File      ,
                                run_number       : int          ,
-                               npmt             : int          ,
+                            #    npmt             : int          ,
+                               nsensEP             : int          ,
                                nsipm            : int          ,
                                nsamp_pmt        : int          ,
                                nsamp_sipm       : int          ,
                                order_sensors    : Union[NoneType, Callable]):
-    find_signal       = fl.map(signal_finder(buffer_length, pmt_wid,
+    # find_signal       = fl.map(signal_finder(buffer_length, EP_sensor_wid,
+    #                                          trigger_threshold     ),
+    #                            args = "pmt_bin_wfs"                 ,
+    #                            out  = "pulses"                      )
+    find_signal       = fl.map(signal_finder(buffer_length, EP_sensor_wid,
                                              trigger_threshold     ),
-                               args = "pmt_bin_wfs"                 ,
+                               args = "EP_bin_wfs"                 ,
                                out  = "pulses"                      )
 
     filter_events_signal = fl.map(lambda x: len(x) > 0,
@@ -1153,22 +1164,34 @@ def calculate_and_save_buffers(buffer_length    : float        ,
     write_signal_filter  = fl.sink(event_filter_writer(h5out, "signal"),
                                    args=('event_number', 'passed_signal'))
 
+    # event_times       = fl.map(trigger_times                             ,
+    #                            args = ("pulses", "timestamp", "pmt_bins"),
+    #                            out  = "evt_times"                        )
     event_times       = fl.map(trigger_times                             ,
-                               args = ("pulses", "timestamp", "pmt_bins"),
+                               args = ("pulses", "timestamp", "EP_bins"),
                                out  = "evt_times"                        )
 
+
+    # calculate_buffers = fl.map(bf.buffer_calculator(buffer_length, pre_trigger,
+    #                                                 EP_sensor_wid     ,    sipm_wid),
+    #                            args = ("pulses",
+    #                                    "pmt_bins" ,  "pmt_bin_wfs",
+    #                                    "sipm_bins", "sipm_bin_wfs")        ,
+    #                            out  = "buffers"                            )
     calculate_buffers = fl.map(bf.buffer_calculator(buffer_length, pre_trigger,
-                                                    pmt_wid     ,    sipm_wid),
+                                                    EP_sensor_wid     ,    sipm_wid),
                                args = ("pulses",
-                                       "pmt_bins" ,  "pmt_bin_wfs",
+                                       "EP_bins" ,  "EP_bin_wfs",
                                        "sipm_bins", "sipm_bin_wfs")        ,
                                out  = "buffers"                            )
 
     saved_buffers = "buffers" if order_sensors is None else "ordered_buffers"
     max_subevt    =  math.ceil(max_time / buffer_length)
     buffer_writer_    = sink(buffer_writer( h5out
+                                          , detector_db = detector_db
                                           , run_number = run_number
-                                          , n_sens_eng = npmt
+                                        #   , n_sens_eng = npmt
+                                          , n_sens_eng = nsensEP
                                           , n_sens_trk = nsipm
                                           , length_eng = nsamp_pmt
                                           , length_trk = nsamp_sipm

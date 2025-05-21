@@ -73,6 +73,7 @@ def ic_event_number_base(max_subevt: int) -> Callable:
 
 
 def buffer_writer(h5out, *,
+                  detector_db:          str           ,
                   run_number :          int           ,
                   n_sens_eng :          int           ,
                   n_sens_trk :          int           ,
@@ -113,13 +114,20 @@ def buffer_writer(h5out, *,
                     for the tracking and energy planes and
                     the event timestamps and saves to file.
     """
-
-    eng_writer = rwf_writer(h5out,
-                            group_name      =  group_name,
-                            compression     = compression,
-                            table_name      =     'pmtrd',
-                            n_sensors       =  n_sens_eng,
-                            waveform_length =  length_eng)
+    if 'fiber' in detector_db.lower():
+        eng_writer = rwf_writer(h5out,
+                                group_name      =  group_name,
+                                compression     = compression,
+                                table_name      =     'fibrd',
+                                n_sensors       =  n_sens_eng,
+                                waveform_length =  length_eng)
+    else:
+        eng_writer = rwf_writer(h5out,
+                                group_name      =  group_name,
+                                compression     = compression,
+                                table_name      =     'pmtrd',
+                                n_sensors       =  n_sens_eng,
+                                waveform_length =  length_eng)
 
     trk_writer = rwf_writer(h5out,
                             group_name      =  group_name,

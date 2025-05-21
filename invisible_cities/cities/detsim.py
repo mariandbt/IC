@@ -6,6 +6,7 @@ From Detector Simulation. This city reads energy deposits (hits) and simulates
 S1 and S2 signals. This is accomplished using light tables to compute the signal
 generated in the sensors. The input of this city is nexus output containing hits.
 This city outputs:
+    - fibrd : SiPMfibers  waveforms
     - pmtrd : PMT  waveforms
     - sipmrd: SIPM waveforms
     - MC  info
@@ -41,6 +42,7 @@ from .. detsim.simulate_electrons import drift_electrons
 from .. detsim.simulate_electrons import diffuse_electrons
 from .. detsim.light_tables_c     import LT_SiPM
 from .. detsim.light_tables_c     import LT_PMT
+from .. detsim.light_tables_c     import LT_FIBERS
 from .. detsim.s2_waveforms_c     import create_wfs
 from .. detsim.detsim_waveforms   import s1_waveforms_creator
 
@@ -114,11 +116,24 @@ def ielectron_simulator(*, wi: float, fano_factor: float, lifetime: float,
     return simulate_ielectrons
 
 
-def buffer_times_and_length_getter(pmt_width, sipm_width, el_gap, el_dv, max_length):
+# def buffer_times_and_length_getter(pmt_width, sipm_width, el_gap, el_dv, max_length):
+#     """
+#     Auxiliar function that computes the signal absolute starting-time and an estimated buffer_length
+#     """
+#     max_sensor_bin = max(pmt_width, sipm_width)
+#     def get_buffer_times_and_length(time, times_ph):
+#         start_time = np.floor(min(time) / max_sensor_bin) * max_sensor_bin
+#         el_traverse_time = el_gap / el_dv
+#         end_time   = np.ceil((max(times_ph) + el_traverse_time)/max_sensor_bin) * max_sensor_bin
+#         buffer_length = min(max_length, end_time-start_time)
+#         return start_time, buffer_length
+#     return get_buffer_times_and_length
+
+def buffer_times_and_length_getter(EP_sensor_width, sipm_width, el_gap, el_dv, max_length):
     """
     Auxiliar function that computes the signal absolute starting-time and an estimated buffer_length
     """
-    max_sensor_bin = max(pmt_width, sipm_width)
+    max_sensor_bin = max(EP_sensor_width, sipm_width)
     def get_buffer_times_and_length(time, times_ph):
         start_time = np.floor(min(time) / max_sensor_bin) * max_sensor_bin
         el_traverse_time = el_gap / el_dv
@@ -139,14 +154,23 @@ def s2_waveform_creator(sns_bin_width, LT, el_drift_velocity):
     return create_s2_waveform
 
 
-def bin_edges_getter(pmt_width, sipm_width):
+# def bin_edges_getter(pmt_width, sipm_width):
+#     """
+#     Auxiliar function that returns the waveform bin edges
+#     """
+#     def get_bin_edges(pmt_wfs, sipm_wfs):
+#         pmt_bins  = np.arange(0, pmt_wfs .shape[1]) * pmt_width
+#         sipm_bins = np.arange(0, sipm_wfs.shape[1]) * sipm_width
+#         return pmt_bins, sipm_bins
+#     return get_bin_edges
+def bin_edges_getter(EP_sensor_width, sipm_width):
     """
     Auxiliar function that returns the waveform bin edges
     """
-    def get_bin_edges(pmt_wfs, sipm_wfs):
-        pmt_bins  = np.arange(0, pmt_wfs .shape[1]) * pmt_width
+    def get_bin_edges(EP_sensor_wfs, sipm_wfs):
+        EP_sensor_bins  = np.arange(0, EP_sensor_wfs .shape[1]) * EP_sensor_width
         sipm_bins = np.arange(0, sipm_wfs.shape[1]) * sipm_width
-        return pmt_bins, sipm_bins
+        return EP_sensor_bins, sipm_bins
     return get_bin_edges
 
 
@@ -165,7 +189,7 @@ def detsim( *
           , buffer_params      : dict
           , physics_params     : dict
           , rate               : float
-          , data_mc_ratio_pmt  : float
+          , data_mc_ratio_EP   : float
           , data_mc_ratio_sipm : float
           ):
 
@@ -178,9 +202,18 @@ def detsim( *
     el_dv = physics_params_.pop("el_drift_velocity")
 
     # derived parameters
-    datapmt  = db.DataPMT (detector_db, run_number)
+    if 'fiber' in detector_db.lower():
+        dataEP  = db.DataFIB (detector_db, run_number)
+    else:
+        dataEP  = db.DataPMT (detector_db, run_number)
+
     datasipm = db.DataSiPM(detector_db, run_number)
-    lt_pmt   = LT_PMT (fname=os.path.expandvars(s2_lighttable), data_mc_ratio=data_mc_ratio_pmt )
+
+    if 'fiber' in detector_db.lower():
+        lt_EP   = LT_FIBERS (fname=os.path.expandvars(s2_lighttable), data_mc_ratio=data_mc_ratio_EP )
+    else:
+        lt_EP   = LT_PMT (fname=os.path.expandvars(s2_lighttable), data_mc_ratio=data_mc_ratio_EP )
+
     lt_sipm  = LT_SiPM(fname=os.path.expandvars(sipm_psf)     , data_mc_ratio=data_mc_ratio_sipm, sipm_database=datasipm)
     el_gap   = lt_sipm.el_gap_width
 
@@ -209,7 +242,11 @@ def detsim( *
                            out = 'enough_photons')
     dark_events   = fl.count_filter(bool, args='enough_photons')
 
-    get_buffer_info = buffer_times_and_length_getter(buffer_params_["pmt_width"],
+    # get_buffer_info = buffer_times_and_length_getter(buffer_params_["pmt_width"],
+    #                                                  buffer_params_["sipm_width"],
+    #                                                  el_gap, el_dv,
+    #                                                  buffer_params_["max_time"])
+    get_buffer_info = buffer_times_and_length_getter(buffer_params_["EP_sensor_width"],
                                                      buffer_params_["sipm_width"],
                                                      el_gap, el_dv,
                                                      buffer_params_["max_time"])
@@ -217,50 +254,122 @@ def detsim( *
                                          args = ('time', 'times_ph'),
                                          out = ('tmin', 'buffer_length'))
 
-    create_pmt_s1_waveforms = fl.map(s1_waveforms_creator(s1_lighttable, ws, buffer_params_["pmt_width"]),
-                                     args = ('x', 'y', 'z', 'time', 'energy', 'tmin', 'buffer_length'),
-                                     out = 's1_pmt_waveforms')
 
-    create_pmt_s2_waveforms = fl.map(s2_waveform_creator(buffer_params_["pmt_width"], lt_pmt, el_dv),
+    create_EP_s1_waveforms = fl.map(s1_waveforms_creator(s1_lighttable, ws, buffer_params_["EP_sensor_width"]),
+                                    args = ('x', 'y', 'z', 'time', 'energy', 'tmin', 'buffer_length'),
+                                    out = 's1_EP_waveforms')
+    # create_EP_s1_waveforms = fl.map(s1_waveforms_creator(s1_lighttable, ws, buffer_params_["pmt_width"]),
+    #                                 args = ('x', 'y', 'z', 'time', 'energy', 'tmin', 'buffer_length'),
+    #                                 out = 's1_pmt_waveforms')
+
+    # create_pmt_s2_waveforms = fl.map(s2_waveform_creator(buffer_params_["pmt_width"], lt_pmt, el_dv),
+    #                                  args = ('x_ph', 'y_ph', 'times_ph', 'nphotons', 'tmin', 'buffer_length'),
+    #                                  out = 's2_pmt_waveforms')
+
+    create_EP_s2_waveforms = fl.map(s2_waveform_creator(buffer_params_["EP_sensor_width"], lt_EP, el_dv),
                                      args = ('x_ph', 'y_ph', 'times_ph', 'nphotons', 'tmin', 'buffer_length'),
-                                     out = 's2_pmt_waveforms')
+                                     out = 's2_EP_waveforms')
 
-    sum_pmt_waveforms = fl.map(lambda x, y : x+y,
-                               args = ('s1_pmt_waveforms', 's2_pmt_waveforms'),
-                               out = 'pmt_bin_wfs')
 
-    create_pmt_waveforms = fl.pipe(create_pmt_s1_waveforms, create_pmt_s2_waveforms, sum_pmt_waveforms)
+    def scale_and_repeat_s1(s1_waveforms, original_sensors=60, target_sensors=108):
+        """
+        Scales waveforms from original sensors to target sensors by:
+        1. Scaling light by original_sensors/target_sensors
+        2. Repeating the waveform to fill target sensors
+        
+        Args:
+            s1_waveforms: Array of shape (original_sensors, time_bins)
+            original_sensors: Number of input sensors (default 60 for NEXT100)
+            target_sensors: Number of output sensors (default 108)
+        
+        Returns:
+            Array of shape (target_sensors, time_bins)
+        """
+        # Calculate scaling factor
+        scaling_factor = original_sensors / target_sensors
+        
+        # Scale the waveforms
+        scaled = s1_waveforms * scaling_factor
+        
+        # Calculate how many times to repeat each sensor's waveform
+        repeat_base = target_sensors // original_sensors
+        remainder = target_sensors % original_sensors
+        
+        # Repeat each waveform the base number of times
+        repeated = np.repeat(scaled, repeats=repeat_base, axis=0)
+        
+        # For the remainder, take waveforms from the beginning
+        if remainder > 0:
+            repeated = np.vstack([repeated, scaled[:remainder]])
+        
+        return repeated
+
+    # Then modify your sum operation:
+    if 'fiber' in detector_db.lower():
+        sum_EP_waveforms = fl.map(lambda x, y: scale_and_repeat_s1(x) + y,
+                                args=('s1_EP_waveforms', 's2_EP_waveforms'),
+                                out='EP_bin_wfs')
+    else:
+        # sum_pmt_waveforms = fl.map(lambda x, y : x+y,
+                                # args = ('s1_pmt_waveforms', 's2_pmt_waveforms'),
+                                # out = 'pmt_bin_wfs')
+        sum_EP_waveforms = fl.map(lambda x, y : x+y,
+                                args = ('s1_EP_waveforms', 's2_EP_waveforms'),
+                                out = 'EP_bin_wfs')
+    
+    # sum_fib_waveforms = fl.map(lambda x, y : x+y,
+    #                            args = ('s1_EP_waveforms', 's2_EP_waveforms'),
+    #                            out = 'EP_bin_wfs')
+    print('s1 and s2 summed')
+
+    # create_pmt_waveforms = fl.pipe(create_pmt_s1_waveforms, create_pmt_s2_waveforms, sum_pmt_waveforms)
+    create_EP_waveforms = fl.pipe(create_EP_s1_waveforms, create_EP_s2_waveforms, sum_EP_waveforms)
+    print('fiber waveforms created')
 
     create_sipm_waveforms = fl.map(s2_waveform_creator(buffer_params_["sipm_width"], lt_sipm, el_dv),
                                    args = ('x_ph', 'y_ph', 'times_ph', 'nphotons', 'tmin', 'buffer_length'),
                                    out = 'sipm_bin_wfs')
+    print('sipm waveforms created')
 
-    get_bin_edges  = fl.map(bin_edges_getter(buffer_params_["pmt_width"], buffer_params_["sipm_width"]),
-                            args = ('pmt_bin_wfs', 'sipm_bin_wfs'),
-                            out = ('pmt_bins', 'sipm_bins'))
+    # get_bin_edges  = fl.map(bin_edges_getter(buffer_params_["pmt_width"], buffer_params_["sipm_width"]),
+    #                         args = ('pmt_bin_wfs', 'sipm_bin_wfs'),
+    #                         out = ('pmt_bins', 'sipm_bins'))
+    get_bin_edges  = fl.map(bin_edges_getter(buffer_params_["EP_sensor_width"], buffer_params_["sipm_width"]),
+                            args = ('EP_bin_wfs', 'sipm_bin_wfs'),
+                            out = ('EP_bins', 'sipm_bins'))
+    print('bin edges found')
 
     event_count_in = fl.spy_count()
     evtnum_collect = collect()
 
+    print(f'n_sensors = {len(dataEP)}')
     with tb.open_file(file_out, "w", filters = tbl.filters(compression)) as h5out:
-        buffer_calculation = calculate_and_save_buffers( buffer_params_["length"]
+        buffer_calculation = calculate_and_save_buffers( detector_db
+                                                       , buffer_params_["length"]
                                                        , buffer_params_["max_time"]
                                                        , buffer_params_["pre_trigger"]
-                                                       , buffer_params_["pmt_width"]
+                                                    #    , buffer_params_["pmt_width"]
+                                                       , buffer_params_["EP_sensor_width"]
                                                        , buffer_params_["sipm_width"]
                                                        , buffer_params_["trigger_thr"]
                                                        , h5out
                                                        , run_number
-                                                       , len(datapmt)
+                                                    #    , len(datapmt)
+                                                       , len(dataEP)
                                                        , len(datasipm)
+                                                    #    , int(buffer_params_["length"] /
+                                                    #      buffer_params_["pmt_width"])
                                                        , int(buffer_params_["length"] /
-                                                         buffer_params_["pmt_width"])
+                                                         buffer_params_["EP_sensor_width"])
                                                        , int(buffer_params_["length"] /
                                                          buffer_params_["sipm_width"])
                                                        , order_sensors = None)
+        print('bin edges found')
 
         write_nohits_filter   = fl.sink(event_filter_writer(h5out, "active_hits"), args=("event_number", "passed_active"))
         write_dark_evt_filter = fl.sink(event_filter_writer(h5out, "dark_events"), args=("event_number", "enough_photons"))
+
+        print('sinks done')
         result = fl.push(source= MC_hits_from_files(files_in, rate),
                          pipe  = fl.pipe( fl.slice(*event_range, close_all=True)
                                         , event_count_in.spy
@@ -276,7 +385,8 @@ def detsim( *
                                         , fl.branch(write_dark_evt_filter)
                                         , dark_events.filter
                                         , get_buffer_times_and_length
-                                        , create_pmt_waveforms
+                                        # , create_pmt_waveforms
+                                        , create_EP_waveforms
                                         , create_sipm_waveforms
                                         , get_bin_edges
                                         , buffer_calculation
