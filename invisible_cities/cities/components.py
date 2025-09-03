@@ -28,6 +28,7 @@ from .. dataflow                  import                  dataflow as  fl
 from .. dataflow.dataflow         import                      sink
 from .. dataflow.dataflow         import                      pipe
 from .. evm    .ic_containers     import                SensorData
+from .. evm    .ic_containers     import                SensorDataFIB
 from .. evm    .event_model       import                   KrEvent
 from .. evm    .event_model       import                       Hit
 from .. evm    .event_model       import                   Cluster
@@ -413,10 +414,21 @@ def get_run_number(h5in):
     raise tb.exceptions.NoSuchNodeError(f"No node runInfo or RunInfo in file {h5in}")
 
 
-def get_pmt_wfs(h5in, wf_type):
-    if   wf_type is WfType.rwf : return h5in.root.RD.pmtrwf
-    elif wf_type is WfType.mcrd: return h5in.root.   pmtrd
-    else                       : raise  TypeError(f"Invalid WfType: {type(wf_type)}")
+# def get_pmt_wfs(h5in, wf_type):
+#     if   wf_type is WfType.rwf : return h5in.root.RD.pmtrwf
+#     elif wf_type is WfType.mcrd: return h5in.root.   pmtrd
+#     else                       : raise  TypeError(f"Invalid WfType: {type(wf_type)}")
+
+def get_EPsens_wfs(h5in, detector_db, wf_type):
+    if 'fiber' in detector_db.lower():
+        if   wf_type is WfType.rwf : return h5in.root.RD.fibrwf
+        elif wf_type is WfType.mcrd: return h5in.root.   fibrd
+        else                       : raise  TypeError(f"Invalid WfType: {type(wf_type)}")
+    else:
+        if   wf_type is WfType.rwf : return h5in.root.RD.pmtrwf
+        elif wf_type is WfType.mcrd: return h5in.root.   pmtrd
+        else                       : raise  TypeError(f"Invalid WfType: {type(wf_type)}")
+
 
 def get_sipm_wfs(h5in, wf_type):
     if   wf_type is WfType.rwf : return h5in.root.RD.sipmrwf
@@ -438,6 +450,10 @@ def get_event_info(h5in):
 def get_number_of_active_pmts(detector_db, run_number):
     datapmt = load_db.DataPMT(detector_db, run_number)
     return np.count_nonzero(datapmt.Active.values.astype(bool))
+
+def get_number_of_active_SiPMfibs(detector_db, run_number):
+    datafib = load_db.DataFIB(detector_db, run_number)
+    return np.count_nonzero(datafib.Active.values.astype(bool))
 
 
 def check_nonempty_indices(s1_indices, s2_indices):
@@ -527,28 +543,55 @@ def mcsensors_from_file(paths     : List[str],
                        sipm_resp    = sipm_resp)
 
 
-def wf_from_files(paths, wf_type):
+# def wf_from_files(paths, wf_type):
+#     for path in paths:
+#         with tb.open_file(path, "r") as h5in:
+#             try:
+#                 event_info  = get_event_info  (h5in)
+#                 run_number  = get_run_number  (h5in)
+#                 pmt_wfs     = get_pmt_wfs     (h5in, wf_type)
+#                 sipm_wfs    = get_sipm_wfs    (h5in, wf_type)
+#                 (trg_type ,
+#                  trg_chann) = get_trigger_info(h5in)
+#             except tb.exceptions.NoSuchNodeError:
+#                 continue
+
+#             check_lengths(pmt_wfs, sipm_wfs, event_info, trg_type, trg_chann)
+
+#             for pmt, sipm, evtinfo, trtype, trchann in zip(pmt_wfs, sipm_wfs, event_info, trg_type, trg_chann):
+#                 event_number, timestamp         = evtinfo.fetch_all_fields()
+#                 if trtype  is not None: trtype  = trtype .fetch_all_fields()[0]
+
+#                 yield dict(pmt=pmt, sipm=sipm, run_number=run_number,
+#                            event_number=event_number, timestamp=timestamp,
+#                            trigger_type=trtype, trigger_channels=trchann)
+def wf_from_files(paths, detector_db, wf_type):
     for path in paths:
         with tb.open_file(path, "r") as h5in:
             try:
                 event_info  = get_event_info  (h5in)
                 run_number  = get_run_number  (h5in)
-                pmt_wfs     = get_pmt_wfs     (h5in, wf_type)
+                EP_wfs      = get_EPsens_wfs  (h5in, detector_db, wf_type)
                 sipm_wfs    = get_sipm_wfs    (h5in, wf_type)
                 (trg_type ,
                  trg_chann) = get_trigger_info(h5in)
             except tb.exceptions.NoSuchNodeError:
                 continue
 
-            check_lengths(pmt_wfs, sipm_wfs, event_info, trg_type, trg_chann)
+            check_lengths(EP_wfs, sipm_wfs, event_info, trg_type, trg_chann)
 
-            for pmt, sipm, evtinfo, trtype, trchann in zip(pmt_wfs, sipm_wfs, event_info, trg_type, trg_chann):
+            for EPsens, sipm, evtinfo, trtype, trchann in zip(EP_wfs, sipm_wfs, event_info, trg_type, trg_chann):
                 event_number, timestamp         = evtinfo.fetch_all_fields()
                 if trtype  is not None: trtype  = trtype .fetch_all_fields()[0]
 
-                yield dict(pmt=pmt, sipm=sipm, run_number=run_number,
-                           event_number=event_number, timestamp=timestamp,
-                           trigger_type=trtype, trigger_channels=trchann)
+                if 'fiber' in detector_db.lower():
+                    yield dict(fib=EPsens, sipm=sipm, run_number=run_number,
+                            event_number=event_number, timestamp=timestamp,
+                            trigger_type=trtype, trigger_channels=trchann)
+                else:
+                    yield dict(pmt=EPsens, sipm=sipm, run_number=run_number,
+                            event_number=event_number, timestamp=timestamp,
+                            trigger_type=trtype, trigger_channels=trchann)
 
 
 def pmap_from_files(paths):
@@ -638,6 +681,7 @@ def dst_from_files(paths: List[str], group: str, node:str) -> Iterator[Dict[str,
 def MC_hits_from_files(files_in : List[str], rate: float) -> Generator:
     timestamp = create_timestamp(rate)
     for filename in files_in:
+        print(f'file_in: {filename}')
         try:
             hits_df = load_mchits_df(filename)
         except tb.exceptions.NoSuchNodeError:
@@ -698,20 +742,25 @@ def dhits_from_files(paths: List[str]) -> Iterator[Dict[str,Union[HitCollection,
 
 def sensor_data(path, wf_type):
     with tb.open_file(path, "r") as h5in:
-        # if   wf_type is WfType.rwf :   (pmt_wfs, sipm_wfs) = (h5in.root.RD .pmtrwf,   h5in.root.RD .sipmrwf)
-        # elif wf_type is WfType.mcrd:   (pmt_wfs, sipm_wfs) = (h5in.root.    pmtrd ,   h5in.root.    sipmrd )
+        if   wf_type is WfType.rwf :   (pmt_wfs, sipm_wfs) = (h5in.root.RD .pmtrwf,   h5in.root.RD .sipmrwf)
+        elif wf_type is WfType.mcrd:   (pmt_wfs, sipm_wfs) = (h5in.root.    pmtrd ,   h5in.root.    sipmrd )
+        else                       :   raise TypeError(f"Invalid WfType: {type(wf_type)}")
+        _, NPMT ,  PMTWL =  pmt_wfs.shape
+        _, NSIPM, SIPMWL = sipm_wfs.shape
+        return SensorData(NPMT=NPMT, PMTWL=PMTWL, NSIPM=NSIPM, SIPMWL=SIPMWL)
+    
+def sensor_data_fibers(path, wf_type):
+    with tb.open_file(path, "r") as h5in:
         if   wf_type is WfType.rwf :   (fib_wfs, sipm_wfs) = (h5in.root.RD .fibrwf,   h5in.root.RD .sipmrwf)
         elif wf_type is WfType.mcrd:   (fib_wfs, sipm_wfs) = (h5in.root.    fibrd ,   h5in.root.    sipmrd )
         else                       :   raise TypeError(f"Invalid WfType: {type(wf_type)}")
-        # _, NPMT ,  PMTWL =  pmt_wfs.shape
         _, NFIB ,  FIBWL =  fib_wfs.shape
         _, NSIPM, SIPMWL = sipm_wfs.shape
-        # return SensorData(NPMT=NPMT, PMTWL=PMTWL, NSIPM=NSIPM, SIPMWL=SIPMWL)
-        return SensorData(NFIB=NFIB, FIBWL=FIBWL, NSIPM=NSIPM, SIPMWL=SIPMWL)
+        return SensorDataFIB(NFIB=NFIB, FIBWL=FIBWL, NSIPM=NSIPM, SIPMWL=SIPMWL)
 
 ####### Transformers ########
 
-def build_pmap(detector_db, run_number, pmt_samp_wid, sipm_samp_wid,
+def build_pmap(detector_db, run_number, EP_samp_wid, sipm_samp_wid,
                s1_lmax, s1_lmin, s1_rebin_stride, s1_stride, s1_tmax, s1_tmin,
                s2_lmax, s2_lmin, s2_rebin_stride, s2_stride, s2_tmax, s2_tmin, thr_sipm_s2):
     s1_params = dict(time        = minmax(min = s1_tmin,
@@ -728,13 +777,17 @@ def build_pmap(detector_db, run_number, pmt_samp_wid, sipm_samp_wid,
                     stride       = s2_stride,
                     rebin_stride = s2_rebin_stride)
 
-    datapmt = load_db.DataPMT(detector_db, run_number)
-    pmt_ids = datapmt.SensorID[datapmt.Active.astype(bool)].values
+    if 'fiber' in detector_db.lower():
+        dataEP = load_db.DataFIB(detector_db, run_number)
+    else:
+        dataEP = load_db.DataPMT(detector_db, run_number)
+
+    EP_ids = dataEP.SensorID[dataEP.Active.astype(bool)].values
 
     def build_pmap(ccwf, s1_indx, s2_indx, sipmzs): # -> PMap
         return pkf.get_pmap(ccwf, s1_indx, s2_indx, sipmzs,
-                            s1_params, s2_params, thr_sipm_s2, pmt_ids,
-                            pmt_samp_wid, sipm_samp_wid)
+                            s1_params, s2_params, thr_sipm_s2, EP_ids,
+                            EP_samp_wid, sipm_samp_wid)
 
     return build_pmap
 
@@ -1058,7 +1111,7 @@ def waveform_integrator(limits):
 
 
 # Compound components
-def compute_and_write_pmaps(detector_db, run_number, pmt_samp_wid, sipm_samp_wid,
+def compute_and_write_pmaps(detector_db, run_number, EP_samp_wid, sipm_samp_wid,
                   s1_lmax, s1_lmin, s1_rebin_stride, s1_stride, s1_tmax, s1_tmin,
                   s2_lmax, s2_lmin, s2_rebin_stride, s2_stride, s2_tmax, s2_tmin, thr_sipm_s2,
                   h5out, sipm_rwf_to_cal=None):
@@ -1070,7 +1123,7 @@ def compute_and_write_pmaps(detector_db, run_number, pmt_samp_wid, sipm_samp_wid
     empty_indices   = fl.count_filter(bool, args = "indices_pass")
 
     # Build the PMap
-    compute_pmap     = fl.map(build_pmap(detector_db, run_number, pmt_samp_wid, sipm_samp_wid,
+    compute_pmap     = fl.map(build_pmap(detector_db, run_number, EP_samp_wid, sipm_samp_wid,
                                          s1_lmax, s1_lmin, s1_rebin_stride, s1_stride, s1_tmax, s1_tmin,
                                          s2_lmax, s2_lmin, s2_rebin_stride, s2_stride, s2_tmax, s2_tmin, thr_sipm_s2),
                               args = ("ccwfs", "s1_indices", "s2_indices", "sipm"),

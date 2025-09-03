@@ -43,8 +43,10 @@ from .  components import collect
 from .  components import copy_mc_info
 from .  components import zero_suppress_wfs
 from .  components import sensor_data
+from .  components import sensor_data_fibers
 from .  components import wf_from_files
 from .  components import get_number_of_active_pmts
+from .  components import get_number_of_active_SiPMfibs
 from .  components import compute_and_write_pmaps
 from .  components import simulate_sipm_response
 from .  components import calibrate_sipms
@@ -63,8 +65,8 @@ def hypathia( files_in        : OneOrManyFiles
             , filter_padding  : int
             , thr_sipm        : float
             , thr_sipm_type   : SiPMThreshold
-            , pmt_wfs_rebin   : int
-            , pmt_pe_rms      : float
+            , EP_wfs_rebin   : int
+            , EP_pe_rms      : float
             , s1_lmin         : int  , s1_lmax     : int
             , s1_tmin         : float, s1_tmax     : float
             , s1_rebin_stride : int  , s1_stride   : int
@@ -73,33 +75,46 @@ def hypathia( files_in        : OneOrManyFiles
             , s2_tmin         : float, s2_tmax     : float
             , s2_rebin_stride : int  , s2_stride   : int
             , thr_csum_s2     : float, thr_sipm_s2 : float
-            , pmt_samp_wid    : float
+            , EP_samp_wid    : float
             , sipm_samp_wid   : float
             ):
 
     sipm_thr = get_actual_sipm_thr(thr_sipm_type, thr_sipm, detector_db, run_number)
 
-    #### Define data transformations
-    sd = sensor_data(files_in[0], WfType.mcrd)
 
     # Raw WaveForm to Corrected WaveForm
-    mcrd_to_rwf      = fl.map(rebin_pmts(pmt_wfs_rebin),
-                              args = "pmt",
-                              out  = "rwf")
+    if 'fiber' in detector_db.lower():
+        #### Define data transformations
+        sd = sensor_data_fibers(files_in[0], WfType.mcrd)
+        mcrd_to_rwf      = fl.map(rebin_EPsensors(EP_wfs_rebin),
+                                args = "fib",
+                                out  = "rwf")
+    else:
+        #### Define data transformations
+        sd = sensor_data(files_in[0], WfType.mcrd)
+        mcrd_to_rwf      = fl.map(rebin_EPsensors(EP_wfs_rebin),
+                                args = "pmt",
+                                out  = "rwf")
 
     # Add single pe fluctuation to pmts
-    simulate_pmt = fl.map(partial(sf.charge_fluctuation, single_pe_rms=pmt_pe_rms),
+    simulate_EP = fl.map(partial(sf.charge_fluctuation, single_pe_rms=EP_pe_rms),
                           args = "rwf",
                           out = "ccwfs")
 
-    # Compute pmt sum
-    pmt_sum          = fl.map(pmts_sum, args = 'ccwfs',
-                              out  = 'pmt')
-
-    # Find where waveform is above threshold
-    zero_suppress    = fl.map(zero_suppress_wfs(thr_csum_s1, thr_csum_s2),
-                              args = ("pmt", "pmt"),
-                              out  = ("s1_indices", "s2_indices", "s2_energies"))
+    if 'fiber' in detector_db.lower():
+        # Compute fibers sum
+        EP_sum          = fl.map(EPsensors_sum, args = 'ccwfs', out  = 'fib')
+        # Find where waveform is above threshold
+        zero_suppress    = fl.map(zero_suppress_wfs(thr_csum_s1, thr_csum_s2),
+                                args = ("fib", "fib"),
+                                out  = ("s1_indices", "s2_indices", "s2_energies"))
+    else:
+        # Compute pmt sum
+        EP_sum          = fl.map(EPsensors_sum, args = 'ccwfs', out  = 'pmt')
+        # Find where waveform is above threshold
+        zero_suppress    = fl.map(zero_suppress_wfs(thr_csum_s1, thr_csum_s2),
+                                args = ("pmt", "pmt"),
+                                out  = ("s1_indices", "s2_indices", "s2_energies"))
 
     # SiPMs simulation
     simulate_sipm_response_  = fl.map(simulate_sipm_response(detector_db, run_number,
@@ -124,26 +139,34 @@ def hypathia( files_in        : OneOrManyFiles
 
         # Define writers...
         write_event_info_   = run_and_event_writer(h5out)
-        write_trigger_info_ = trigger_writer      (h5out, get_number_of_active_pmts(detector_db, run_number))
+        if 'fiber' in detector_db.lower():
+            write_trigger_info_ = trigger_writer      (h5out, get_number_of_active_SiPMfibs(detector_db, run_number))
+        else:
+            write_trigger_info_ = trigger_writer      (h5out, get_number_of_active_pmts(detector_db, run_number))
 
         # ... and make them sinks
         write_event_info   = sink(write_event_info_  , args=(   "run_number",     "event_number", "timestamp"   ))
         write_trigger_info = sink(write_trigger_info_, args=( "trigger_type", "trigger_channels"                ))
 
+
         compute_pmaps, empty_indices, empty_pmaps = compute_and_write_pmaps(
-                                             detector_db, run_number, pmt_samp_wid, sipm_samp_wid,
+                                             detector_db, run_number, EP_samp_wid, sipm_samp_wid,
                                              s1_lmax, s1_lmin, s1_rebin_stride, s1_stride, s1_tmax, s1_tmin,
                                              s2_lmax, s2_lmin, s2_rebin_stride, s2_stride, s2_tmax, s2_tmin, thr_sipm_s2,
                                              h5out, sipm_rwf_to_cal)
 
-        result = push(source = wf_from_files(files_in, WfType.mcrd),
+        # result = push(source = wf_from_files(files_in, WfType.mcrd),
+        result = push(source = wf_from_files(files_in, detector_db, WfType.mcrd),
                       pipe   = pipe(fl.slice(*event_range, close_all=True),
                                     print_every(print_mod),
                                     event_count_in.spy,
                                     mcrd_to_rwf,
-                                    simulate_pmt,
-                                    pmt_sum,
+                                    fl.spy(lambda x: print(x['rwf'].sum())),
+                                    simulate_EP,
+                                    EP_sum,
+                                    # fl.spy(lambda x: print(x['fib'].sum())),
                                     zero_suppress,
+                                    fl.spy(lambda x: print((x['s2_indices']).sum())),
                                     simulate_sipm_response_,
                                     discretize_signal,
                                     compute_pmaps,
@@ -156,14 +179,16 @@ def hypathia( files_in        : OneOrManyFiles
                                    evtnum_list = evtnum_collect .future,
                                    over_thr    = empty_indices  .future,
                                    full_pmap   = empty_pmaps    .future))
+        print('EVERYTHING CORRECT HERE')
+        print(f'run = {run_number}')
 
         if run_number <= 0:
             copy_mc_info(files_in, h5out, result.evtnum_list,
                          detector_db, run_number)
 
 
-def rebin_pmts(rebin_stride):
-    def rebin_pmts(rwf):
+def rebin_EPsensors(rebin_stride):
+    def rebin_EPsensors(rwf):
         rebinned_wfs = rwf
         if rebin_stride > 1:
             # dummy data for times and widths
@@ -172,8 +197,8 @@ def rebin_pmts(rebin_stride):
             waveforms = rwf
             _, _, rebinned_wfs = pkf.rebin_times_and_waveforms(times, widths, waveforms, rebin_stride=rebin_stride)
         return rebinned_wfs
-    return rebin_pmts
+    return rebin_EPsensors
 
 
-def pmts_sum(rwfs):
+def EPsensors_sum(rwfs):
     return rwfs.sum(axis=0)

@@ -109,6 +109,7 @@ def load_pmaps(filename):
     s2pmtdf_grouped=s2pmtdf.groupby('event')
     sidf_grouped   =sidf   .groupby('event')
     for event_number in event_numbers:
+        print(event_number)
         try:
             s1indx=s1df_grouped      .groups[event_number]
         except KeyError:
@@ -197,6 +198,7 @@ def s2s_from_df(s2df, s2pmtdf, sidf):
          pmt_r ) = build_pmt_responses (s2df   [s2df   .peak == peak_number],
                                         s2pmtdf[s2pmtdf.peak == peak_number])
         sipm_r   = build_sipm_responses(sidf   [sidf   .peak == peak_number])
+        print('HERE!')
         s2s.append(S2(times, widths, pmt_r, sipm_r))
 
     return s2s

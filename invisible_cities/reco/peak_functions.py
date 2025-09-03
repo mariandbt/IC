@@ -101,6 +101,8 @@ def build_peak(indices, times,
                                      ccwf, pmt_ids,
                                      rebin_stride, pad_zeros = with_sipms,
                                      sipm_pmt_bin_ratio = sipm_pmt_bin_ratio)
+    print(f'pmt_r.all_waveforms.shap = {pmt_r.all_waveforms.shape}')
+    print(pk_times)
     if with_sipms:
         sipm_r = build_sipm_responses(indices // sipm_pmt_bin_ratio,
                                       times // sipm_pmt_bin_ratio,

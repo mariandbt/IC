@@ -214,7 +214,7 @@ def detsim( *
     else:
         lt_EP   = LT_PMT (fname=os.path.expandvars(s2_lighttable), data_mc_ratio=data_mc_ratio_EP )
 
-    lt_sipm  = LT_SiPM(fname=os.path.expandvars(sipm_psf)     , data_mc_ratio=data_mc_ratio_sipm, sipm_database=datasipm)
+    lt_sipm  = LT_SiPM(fname=os.path.expandvars(sipm_psf), data_mc_ratio=data_mc_ratio_sipm, sipm_database=datasipm)
     el_gap   = lt_sipm.el_gap_width
 
     filter_delayed_hits = fl.map(filter_hits_after_max_time(buffer_params_["max_time"]),
@@ -286,7 +286,8 @@ def detsim( *
             Array of shape (target_sensors, time_bins)
         """
         # Calculate scaling factor
-        scaling_factor = original_sensors / target_sensors
+        # scaling_factor = original_sensors / target_sensors
+        scaling_factor = 1
         
         # Scale the waveforms
         scaled = s1_waveforms * scaling_factor
@@ -310,16 +311,14 @@ def detsim( *
                                 args=('s1_EP_waveforms', 's2_EP_waveforms'),
                                 out='EP_bin_wfs')
     else:
-        # sum_pmt_waveforms = fl.map(lambda x, y : x+y,
-                                # args = ('s1_pmt_waveforms', 's2_pmt_waveforms'),
-                                # out = 'pmt_bin_wfs')
         sum_EP_waveforms = fl.map(lambda x, y : x+y,
                                 args = ('s1_EP_waveforms', 's2_EP_waveforms'),
                                 out = 'EP_bin_wfs')
+    print('hey :)')
+    # sum_EP_waveforms = fl.map(lambda x, y : 0.2*np.ones_like(x)+y,
+    #                         args = ('s1_EP_waveforms', 's2_EP_waveforms'),
+    #                         out = 'EP_bin_wfs')
     
-    # sum_fib_waveforms = fl.map(lambda x, y : x+y,
-    #                            args = ('s1_EP_waveforms', 's2_EP_waveforms'),
-    #                            out = 'EP_bin_wfs')
     print('s1 and s2 summed')
 
     # create_pmt_waveforms = fl.pipe(create_pmt_s1_waveforms, create_pmt_s2_waveforms, sum_pmt_waveforms)
@@ -343,6 +342,7 @@ def detsim( *
     evtnum_collect = collect()
 
     print(f'n_sensors = {len(dataEP)}')
+    print(f'file_out = {file_out}')
     with tb.open_file(file_out, "w", filters = tbl.filters(compression)) as h5out:
         buffer_calculation = calculate_and_save_buffers( detector_db
                                                        , buffer_params_["length"]

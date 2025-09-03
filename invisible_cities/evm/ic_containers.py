@@ -21,6 +21,7 @@ def _add_namedtuple_in_this_module(name, attribute_names):
 
 for name, attrs in (
         ('SensorData'     , 'NPMT PMTWL NSIPM SIPMWL '),
+        ('SensorDataFIB'  , 'NFIB FIBWL NSIPM SIPMWL '),
         ('DeconvParams'   , 'n_baseline thr_trigger'),
         ('CalibVectors'   , 'channel_id coeff_blr coeff_c adc_to_pes adc_to_pes_sipm pmt_active'),
         ('S12Params'      , 'time stride length rebin_stride'),

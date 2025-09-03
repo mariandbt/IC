@@ -22,11 +22,13 @@ def _decode_str_columns(df):
 
 def load_dst(filename, group, node, evt_list=None, ignore_errors=False):
     """load a kdst if filename, group and node correctly found"""
+    print(f'filename = {filename}')
 
     def read_dst_(filename, group, node, evt_list):
         with tb.open_file(filename) as h5in:
             table  = getattr(getattr(h5in.root, group), node)
             if evt_list is None:
+                print(f'table = {type(table)}')
                 values = table.read()
             else:
                 events = table.read(field='event')
