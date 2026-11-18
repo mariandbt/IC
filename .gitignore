@@ -26,3 +26,6 @@ miniconda.sh
 
 # macOS
 .DS_Store
+outputs/
+slurms/errors/
+slurms/*.out
